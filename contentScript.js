@@ -4085,8 +4085,18 @@ async function buildExport() {
       return `${pad}SVG: ${node.svg}`;
     }
 
-    // Children
-    if (node.children && node.children.length > 0) {
+    // Children, with the text between them in order ("Create" beside a ▾ icon),
+    // as the HTML output keeps it
+    const ordered = node.orderedContent || [];
+    if (ordered.some(c => c.type === 'element')) {
+      toon += ' {\n';
+      for (const item of ordered) {
+        toon += item.type === 'text'
+          ? `${pad}  "${item.content}"\n`
+          : structureToToon(item.node, indent + 1) + '\n';
+      }
+      toon += `${pad}}`;
+    } else if (node.children && node.children.length > 0) {
       toon += ' {\n';
       for (const child of node.children) {
         toon += structureToToon(child, indent + 1) + '\n';
