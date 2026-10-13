@@ -326,7 +326,7 @@ when it equals the previous one (a menu that had already closed). One request ru
 
 **Allowed sites.** Any script on a page can post that message, so the bridge only answers on
 local development hosts (`localhost`, `127.0.0.1`, `[::1]`, `*.localhost`, any port) and on
-sites you switch on in **Settings › Agent captures** in the dock (that exact origin, port
+sites you switch on with **Agent captures** in the dock, above Start Selecting (that exact origin, port
 included). Only the dock can change the list, and a site that is not allowed gets no reply at
 all. Each site saves into its own folder, paths are reported relative to Downloads, and
 sensitive URL parameters (`token`, `sid`, `session`, `signature`, `api_key`, …) are blanked

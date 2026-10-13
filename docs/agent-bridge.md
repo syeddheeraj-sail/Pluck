@@ -96,8 +96,8 @@ relative to the downloads folder, so the page never learns the account name.
 
 ### 1. Allow the site
 
-Local development hosts work out of the box. For any other site, open the dock on that tab,
-go to **Settings › Agent captures**, and switch the site on. A site that is not allowed gets
+Local development hosts work out of the box. For any other site, open the dock on that tab
+and switch **Agent captures** on (the row above Start Selecting). A site that is not allowed gets
 no reply at all (so a page cannot detect Pluck): an agent sees the same silence as when Pluck
 is not installed. An allowed site matches only its exact origin, port included; the local
 hosts match on any port.

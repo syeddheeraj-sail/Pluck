@@ -686,7 +686,7 @@ function wire() {
   $('btn-popout').addEventListener('click', () => chrome.tabs.create({ url: chrome.runtime.getURL('panel.html?view=popout') }));
   $('btn-theme').addEventListener('click', () => { settings.theme = settings.theme === 'light' ? 'dark' : 'light'; applyTheme(); $('set-theme').value = settings.theme; saveSettings(); });
   $('btn-minimize').addEventListener('click', () => { chrome.storage.local.set({ pluckMinimized: true }, () => { try { window.close(); } catch (e) {} }); });
-  $('btn-settings').addEventListener('click', () => { $('settings').classList.add('open'); renderAgentSwitch(); });
+  $('btn-settings').addEventListener('click', () => $('settings').classList.add('open'));
   $('btn-settings-back').addEventListener('click', () => $('settings').classList.remove('open'));
   // settings selects
   $('set-autocopy').addEventListener('change', (e) => { settings.autoCopyFormat = e.target.value; saveSettings(); });
@@ -761,7 +761,7 @@ function renderAgentSwitch() {
     let origin = '';
     try { origin = new URL(tab && tab.url).origin; } catch (e) { /* not a web page */ }
     if (!/^https?:/.test(origin)) {
-      $('agent-site-label').textContent = 'This page';
+      $('agent-site-label').textContent = 'this page';
       button.textContent = 'Not available';
       button.disabled = true;
       return;
@@ -825,7 +825,14 @@ function init() {
     }
   });
 
-  if (!isPopout) { queryCurrentState(); startPolling(); }
+  if (!isPopout) {
+    queryCurrentState();
+    startPolling();
+    // The agent switch above Start Selecting follows the active tab's site.
+    renderAgentSwitch();
+    chrome.tabs.onActivated.addListener(renderAgentSwitch);
+    chrome.tabs.onUpdated.addListener((tabId, change, tab) => { if (change.url && tab.active) renderAgentSwitch(); });
+  }
 }
 
 init();
