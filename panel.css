@@ -96,6 +96,7 @@ body {
 .btn-stop:hover { background: rgba(255, 98, 89, 0.22); }
 .btn-block { width: 100%; }
 .btn.on { color: var(--accent-2); border-color: var(--accent); background: var(--accent-soft); }
+.btn:disabled { opacity: 0.6; cursor: default; transform: none; }
 .ctl-grid { display: flex; gap: 7px; }
 .ctl-export { flex: 1; }
 .ctl-util { flex: 0 0 auto; width: 40px; padding: 8px 0; }

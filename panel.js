@@ -686,7 +686,7 @@ function wire() {
   $('btn-popout').addEventListener('click', () => chrome.tabs.create({ url: chrome.runtime.getURL('panel.html?view=popout') }));
   $('btn-theme').addEventListener('click', () => { settings.theme = settings.theme === 'light' ? 'dark' : 'light'; applyTheme(); $('set-theme').value = settings.theme; saveSettings(); });
   $('btn-minimize').addEventListener('click', () => { chrome.storage.local.set({ pluckMinimized: true }, () => { try { window.close(); } catch (e) {} }); });
-  $('btn-settings').addEventListener('click', () => $('settings').classList.add('open'));
+  $('btn-settings').addEventListener('click', () => { $('settings').classList.add('open'); renderAgentSwitch(); });
   $('btn-settings-back').addEventListener('click', () => $('settings').classList.remove('open'));
   // settings selects
   $('set-autocopy').addEventListener('change', (e) => { settings.autoCopyFormat = e.target.value; saveSettings(); });
@@ -748,6 +748,42 @@ function wire() {
       }
     }
     if (changes.pluckHistory) renderHistory(changes.pluckHistory.newValue || []);
+  });
+}
+
+// ================= Agent captures =================
+// Shows and flips whether the active tab's site may drive captures through the
+// agent bridge (see the end of contentScript.js). Only this extension page can
+// change the list; the worker refuses the same request from a page.
+function renderAgentSwitch() {
+  getActiveTab((tab) => {
+    const button = $('btn-agent-site');
+    let origin = '';
+    try { origin = new URL(tab && tab.url).origin; } catch (e) { /* not a web page */ }
+    if (!/^https?:/.test(origin)) {
+      $('agent-site-label').textContent = 'This page';
+      button.textContent = 'Not available';
+      button.disabled = true;
+      return;
+    }
+    $('agent-site-label').textContent = new URL(origin).host;
+    chrome.runtime.sendMessage({ type: 'PLUCK_AGENT_CONFIG', origin }, (config) => {
+      if (chrome.runtime.lastError || !config || !config.ok || !config.enabled) {
+        button.textContent = 'Disabled';
+        button.disabled = true;
+        return;
+      }
+      button.textContent = config.allowed ? (config.byPattern ? 'On (local host)' : 'On') : 'Off';
+      button.setAttribute('aria-pressed', config.allowed ? 'true' : 'false');
+      button.classList.toggle('on', !!config.allowed);
+      button.disabled = !!config.byPattern;
+      button.onclick = () => {
+        chrome.runtime.sendMessage({ type: 'PLUCK_AGENT_SET_ORIGIN', origin, allow: !config.allowed }, () => {
+          void chrome.runtime.lastError;
+          renderAgentSwitch();
+        });
+      };
+    });
   });
 }
 
