@@ -18,6 +18,8 @@ set -euo pipefail
 
 name="${1:?usage: agent-import.sh <name> <dest-dir>}"
 dest="${2:?usage: agent-import.sh <name> <dest-dir>}"
+# Saved under the name the extension writes ('Checkout Card' -> checkout-card).
+name=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/\.{2,}/./g; s/^[-.]+//; s/[-.]+$//' | cut -c1-80)
 root="${PLUCK_DIR:-$HOME/Downloads/pluck}"
 mkdir -p "$dest"
 
@@ -43,7 +45,7 @@ if [[ -n "${PLUCK_REDACT:-}" ]]; then
   for f in "$dest/$name.toon" "$dest/$name.html"; do
     [[ -f "$f" ]] || continue
     PLUCK_REDACT="$PLUCK_REDACT" perl -pi -e \
-      'my $n = $ENV{PLUCK_REDACT}; s/([?&;](?:amp;)?(?:$n)=)[^&#"\x27\s)<>]*/$1REDACTED/gi' "$f"
+      'my $n = $ENV{PLUCK_REDACT}; s/([?&;#](?:amp;)?(?:$n)=)[^&#"\x27\s)<>]*/$1REDACTED/gi; s/((?:%3F|%26|%23)(?:$n)%3D)(?:(?!%26|%23)[^&#"\x27\s)<>])*/$1REDACTED/gi' "$f"
   done
 fi
 

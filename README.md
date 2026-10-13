@@ -314,8 +314,9 @@ document.documentElement.getAttribute('data-pluck-result')
 | `combine: 'ancestor'` | With `selectors`: capture their nearest common parent instead. |
 | `point`, `hovered`, `fullPage` | The element at a point, under the real pointer (keeps a hover menu open), or the whole page. |
 | `preview: true` | Outline the target for `previewMs` (default 4000) and report what is inside: box, hidden / off-screen, headings, controls with labels, text. Nothing is saved. |
-| `expect: { text: [...] }` | Labels the capture must contain. `missing` lists the ones the exported TOON doesn't (case-insensitive). |
+| `expect: { text: [...] }` | Labels the capture must contain. `missing` lists the ones the exported TOON's text doesn't (ignoring case and whitespace). |
 | `formats` | `['toon', 'html']` by default. |
+| `redactParams: [...]` | Extra URL parameter names to blank in this capture (the app's own session key). |
 
 The export runs through the same `buildExport()` as the dock, without opening the dock or
 touching your own selection, and the worker saves `Downloads/pluck/<site>/<name>.toon` and
@@ -325,10 +326,11 @@ when it equals the previous one (a menu that had already closed). One request ru
 
 **Allowed sites.** Any script on a page can post that message, so the bridge only answers on
 local development hosts (`localhost`, `127.0.0.1`, `[::1]`, `*.localhost`, any port) and on
-sites you switch on in **Settings › Agent captures** in the dock. Only the dock can change the
-list. Each site saves into its own folder, paths are reported relative to Downloads, and
+sites you switch on in **Settings › Agent captures** in the dock (that exact origin, port
+included). Only the dock can change the list, and a site that is not allowed gets no reply at
+all. Each site saves into its own folder, paths are reported relative to Downloads, and
 sensitive URL parameters (`token`, `sid`, `session`, `signature`, `api_key`, …) are blanked
-in saved files. The list and the redaction names live in `chrome.storage.local` under
+in saved files, in the query, the fragment and URL-encoded links. The list and the redaction names live in `chrome.storage.local` under
 `pluckAgentBridge` (`{ enabled, origins, redactParams }`).
 
 See [docs/agent-bridge.md](docs/agent-bridge.md) for the full round trip and

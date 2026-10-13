@@ -21,6 +21,15 @@ let _tailwindStyles = null;
 // loader for a capture that never reaches it ---
 let _agentExporting = false;
 
+// --- One export at a time: exports share the selection and the style
+// registries, so a dock export and an agent capture must not interleave ---
+let _exportQueue = Promise.resolve();
+function exclusiveExport(task) {
+  const run = _exportQueue.then(task, task);
+  _exportQueue = run.catch(() => {});
+  return run;
+}
+
 // --- X-Ray Inspector State ---
 let inspectorOverlay = null;
 let inspectorHoverLabel = null;
@@ -3932,7 +3941,11 @@ function buildCloneMapping(original, clone, map) {
 }
 
 // --- Build compact JSON export ---
-async function buildExport() {
+function buildExport() {
+  return exclusiveExport(buildExportNow);
+}
+
+async function buildExportNow() {
   console.log('[Pluck] buildExport called, selectedElements.size:', selectedElements.size);
   selectedElements.forEach((el, idx) => {
     console.log('[Pluck] Selected element', idx, ':', el.tagName, el);
@@ -4059,6 +4072,10 @@ async function buildExport() {
 
   const structure = structures.length === 1 ? structures[0] : structures;
 
+  // Text as one quoted TOON token: quotes, backslashes and line breaks escaped
+  const toonQuote = (text) =>
+    '"' + String(text).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, '\\n') + '"';
+
   // Build TOON (Token-Optimized Object Notation) - more efficient for LLMs
   // Format: Minimal syntax, abbreviated keys, no redundant quotes
   function structureToToon(node, indent = 0) {
@@ -4083,23 +4100,25 @@ async function buildExport() {
     if (node.isIcon) attrs.push(`icon`);
     if (attrs.length) toon += ` (${attrs.join(' ')})`;
 
-    // Text content
-    if (node.text) toon += ` "${node.text}"`;
+    // Children, with the text between them in order ("Create" beside a ▾ icon),
+    // as the HTML output keeps it
+    const ordered = node.orderedContent || [];
+    const mixed = ordered.some(c => c.type === 'element');
+
+    // Text content (for mixed content it is written between the children instead)
+    if (node.text && !mixed) toon += ` ${toonQuote(node.text)}`;
 
     // SVG (inline)
     if (node.svg) {
       return `${pad}SVG: ${node.svg}`;
     }
 
-    // Children, with the text between them in order ("Create" beside a ▾ icon),
-    // as the HTML output keeps it
-    const ordered = node.orderedContent || [];
-    if (ordered.some(c => c.type === 'element')) {
+    // Children
+    if (mixed) {
       toon += ' {\n';
       for (const item of ordered) {
-        toon += item.type === 'text'
-          ? `${pad}  "${item.content}"\n`
-          : structureToToon(item.node, indent + 1) + '\n';
+        if (item.type === 'element') toon += structureToToon(item.node, indent + 1) + '\n';
+        else if (item.content.trim()) toon += `${pad}  ${toonQuote(item.content.trim())}\n`;
       }
       toon += `${pad}}`;
     } else if (node.children && node.children.length > 0) {
@@ -4990,10 +5009,28 @@ try {
     return ('0000000' + hash.toString(16)).slice(-8);
   }
 
+  // Compared without whitespace, so a label split across elements ("Create" +
+  // "Order") matches the same way in the page text and in the TOON.
+  const squash = (v) => String(v == null ? '' : v).replace(/\s+/g, '').toLowerCase();
+
   function missingText(expect, haystack) {
     const wanted = Array.isArray(expect) ? expect : (expect && Array.isArray(expect.text) ? expect.text : []);
-    const text = norm(haystack).toLowerCase();
-    return wanted.filter((t) => typeof t === 'string' && norm(t) && text.indexOf(norm(t).toLowerCase()) === -1);
+    const text = squash(haystack);
+    return wanted.filter((t) => typeof t === 'string' && squash(t) && text.indexOf(squash(t)) === -1);
+  }
+
+  /** The text tokens of a TOON's Structure section (not styles or attribute values). */
+  function toonText(toon) {
+    const at = toon.indexOf('\n## Structure');
+    const body = at === -1 ? toon : toon.slice(at);
+    // Attribute values (`href="…"`) are matched whole and skipped.
+    const re = /="(?:[^"\\\n]|\\.)*"|"((?:[^"\\\n]|\\.)*)"/g;
+    const out = [];
+    let m;
+    while ((m = re.exec(body))) {
+      if (m[1] !== undefined) out.push(m[1].replace(/\\(.)/g, (x, c) => (c === 'n' ? ' ' : c)));
+    }
+    return out.join(' ');
   }
 
   function brief(d) {
@@ -5003,18 +5040,22 @@ try {
   }
 
   /** Runs buildExport on the given elements, then puts the user's own selection back. */
-  async function exportElements(elements) {
-    const previous = Array.from(selectedElements);
-    previous.forEach((el) => toggleElement(el, false));
-    _agentExporting = true;
-    try {
-      elements.forEach((el) => toggleElement(el, true));
-      return await buildExport();
-    } finally {
-      _agentExporting = false;
-      Array.from(selectedElements).forEach((el) => toggleElement(el, false));
-      previous.forEach((el) => { if (el.isConnected) toggleElement(el, true); });
-    }
+  function exportElements(elements) {
+    // Under the export lock, so a dock export waits instead of exporting the
+    // agent's elements or sharing its style registries.
+    return exclusiveExport(async () => {
+      const previous = Array.from(selectedElements);
+      previous.forEach((el) => toggleElement(el, false));
+      _agentExporting = true;
+      try {
+        elements.forEach((el) => toggleElement(el, true));
+        return await buildExportNow();
+      } finally {
+        _agentExporting = false;
+        Array.from(selectedElements).forEach((el) => toggleElement(el, false));
+        previous.forEach((el) => { if (el.isConnected) toggleElement(el, true); });
+      }
+    });
   }
 
   async function run(req) {
@@ -5025,14 +5066,18 @@ try {
       window.postMessage(Object.assign({ [KEY]: 'result' }, out), '*');
     };
 
+    // Checked before anything is written: a site that is not allowed gets no
+    // reply at all, so it cannot tell that Pluck is installed.
+    const gate = await ask({ type: 'PLUCK_AGENT_ALLOWED' });
+    if (!gate.ok) {
+      if (!gate.refused) report({ status: 'error', reason: gate.reason });
+      return;
+    }
     if (busy) { report({ status: 'error', reason: 'a capture is already running' }); return; }
     busy = true;
     report({ status: 'pending' });
     clearPreview();
     try {
-      const gate = await ask({ type: 'PLUCK_AGENT_ALLOWED' });
-      if (!gate.ok) { report({ status: 'error', reason: gate.reason }); return; }
-
       const resolved = resolveTargets(req);
       if (resolved.error) {
         report(Object.assign({ status: 'error', reason: resolved.error }, resolved.missing ? { missing: resolved.missing } : {}));
@@ -5055,9 +5100,10 @@ try {
 
       const print = fingerprint(result.toon);
       const sameAsLast = print === lastFingerprint;
-      const missing = missingText(req.expect, result.toon);
+      const missing = missingText(req.expect, toonText(result.toon));
       const saved = await ask({ type: 'PLUCK_AGENT_SAVE', name: req.name, toon: result.toon, html: result.html,
-        formats: Array.isArray(req.formats) ? req.formats : null });
+        formats: Array.isArray(req.formats) ? req.formats : null,
+        redactParams: Array.isArray(req.redactParams) ? req.redactParams : null });
       if (!saved.ok) { report({ status: 'error', reason: saved.reason, target: targets[0], targets }); return; }
       lastFingerprint = print;
       report({ status: 'done', target: targets[0], targets, paths: saved.paths, bytes: saved.bytes,

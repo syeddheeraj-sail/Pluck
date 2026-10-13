@@ -207,6 +207,7 @@ const AGENT_DEFAULTS = {
   ]
 };
 const AGENT_DOWNLOAD_TIMEOUT_MS = 15000;
+const AGENT_LOCAL_PATTERNS = new Set(AGENT_DEFAULTS.origins);
 
 function agentOriginMatches(origin, pattern) {
   let o;
@@ -217,7 +218,10 @@ function agentOriginMatches(origin, pattern) {
     const suffix = p.hostname.replace(/^wildcard\./, '');
     return o.hostname === suffix || o.hostname.endsWith('.' + suffix);
   }
-  return o.hostname === p.hostname;
+  // The built-in local hosts match on any port (dev servers move between ports);
+  // a site allowed from the dock matches only its exact origin, port included.
+  if (AGENT_LOCAL_PATTERNS.has(pattern)) return o.hostname === p.hostname;
+  return o.origin === p.origin;
 }
 
 async function agentConfig() {
@@ -232,13 +236,17 @@ function agentOriginAllowed(config, origin) {
   return (config.origins || []).some((pattern) => agentOriginMatches(origin || '', pattern));
 }
 
-async function agentAllowed(origin) {
-  const config = await agentConfig();
-  if (!config.enabled) return { ok: false, reason: 'agent bridge is disabled' };
+/** `refused` tells the content script to stay silent, so a site that is not
+ *  allowed cannot learn that Pluck is installed. */
+function agentGate(config, origin) {
+  if (!config.enabled) return { ok: false, refused: true, reason: 'agent bridge is disabled' };
   return agentOriginAllowed(config, origin)
     ? { ok: true }
-    : { ok: false, reason: 'origin not in the agent bridge allowlist: ' + origin +
-        ' (switch on "Agent captures" for this site in the Pluck dock settings)' };
+    : { ok: false, refused: true, reason: 'origin not in the agent bridge allowlist: ' + origin };
+}
+
+async function agentAllowed(origin) {
+  return agentGate(await agentConfig(), origin);
 }
 
 /** Adds or removes one exact origin (the dock's "Agent captures" switch). */
@@ -270,16 +278,20 @@ function agentName(raw) {
 }
 
 /**
- * Blanks the values of the listed query parameters wherever a URL carries them
- * (`?token=…`, `&sid=…`, HTML-escaped `&amp;sid=…`). Only query-string positions
- * match, so text and CSS mentioning the same words are left alone.
+ * Blanks the values of the listed URL parameters wherever a URL carries them:
+ * in the query or fragment (`?token=…`, `&sid=…`, `#access_token=…`, HTML-escaped
+ * `&amp;sid=…`) and inside URL-encoded links (`%3Fsid%3D…`). Only parameter
+ * positions match, so text and CSS mentioning the same words are left alone.
  */
 function agentRedactor(names) {
-  const list = (names || []).filter((n) => typeof n === 'string' && n)
+  const list = (names || []).filter((n) => typeof n === 'string' && /^[\w.-]{1,64}$/.test(n))
     .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   if (!list.length) return (text) => text;
-  const re = new RegExp('([?&;](?:amp;)?(?:' + list.join('|') + ')=)[^&#"\'\\s)<>]*', 'gi');
-  return (text) => (typeof text === 'string' ? text.replace(re, '$1REDACTED') : text);
+  const keys = '(?:' + list.join('|') + ')';
+  const plain = new RegExp('([?&;#](?:amp;)?' + keys + '=)[^&#"\'\\s)<>]*', 'gi');
+  const encoded = new RegExp('((?:%3F|%26|%23)' + keys + '%3D)(?:(?!%26|%23)[^&#"\'\\s)<>])*', 'gi');
+  return (text) => (typeof text === 'string'
+    ? text.replace(plain, '$1REDACTED').replace(encoded, '$1REDACTED') : text);
 }
 
 function agentDataUrl(text, mime) {
@@ -315,31 +327,34 @@ async function agentDownload(relPath, text, mime) {
     if (item && item.state === 'interrupted') return null;
     await new Promise((r) => setTimeout(r, 120));
   }
+  // Too slow: cancel it, so the file does not appear after the capture was reported failed.
+  chrome.downloads.cancel(id, () => void chrome.runtime.lastError);
   return null;
 }
 
+// octet-stream keeps the .toon extension (a text/* blob gets renamed).
+const AGENT_MIME = { toon: 'application/octet-stream', html: 'text/html' };
+
 async function agentSave(origin, message) {
-  const gate = await agentAllowed(origin);
-  if (!gate.ok) return gate;
   const config = await agentConfig();
-  const redact = agentRedactor(config.redactParams);
+  const gate = agentGate(config, origin);
+  if (!gate.ok) return gate;
+  const extra = Array.isArray(message.redactParams) ? message.redactParams.slice(0, 50) : [];
+  const redact = agentRedactor((config.redactParams || []).concat(extra));
   const folder = 'pluck/' + agentSite(origin);
   const name = agentName(message.name);
-  const formats = Array.isArray(message.formats) && message.formats.length ? message.formats : ['toon', 'html'];
+  const wanted = Array.isArray(message.formats) && message.formats.length ? message.formats : ['toon', 'html'];
+  const formats = Object.keys(AGENT_MIME).filter((f) => wanted.indexOf(f) !== -1 && message[f]);
+  const texts = formats.map((f) => redact(message[f]));
+  const saved = await Promise.all(formats.map((f, i) =>
+    agentDownload(folder + '/' + name + '.' + f, texts[i], AGENT_MIME[f])));
   const paths = {};
   const bytes = {};
-  if (formats.indexOf('toon') !== -1 && message.toon) {
-    const toon = redact(message.toon);
-    // octet-stream keeps the .toon extension (a text/* blob gets renamed).
-    paths.toon = await agentDownload(folder + '/' + name + '.toon', toon, 'application/octet-stream');
-    bytes.toon = new Blob([toon]).size;
+  formats.forEach((f, i) => { paths[f] = saved[i]; bytes[f] = new Blob([texts[i]]).size; });
+  const failed = formats.filter((f) => !paths[f]);
+  if (!formats.length || failed.length) {
+    return { ok: false, reason: 'downloads did not complete: ' + (failed.join(', ') || 'nothing to save') };
   }
-  if (formats.indexOf('html') !== -1 && message.html) {
-    const html = redact(message.html);
-    paths.html = await agentDownload(folder + '/' + name + '.html', html, 'text/html');
-    bytes.html = new Blob([html]).size;
-  }
-  if (!paths.toon && !paths.html) return { ok: false, reason: 'downloads did not complete' };
   return { ok: true, paths, bytes };
 }
 

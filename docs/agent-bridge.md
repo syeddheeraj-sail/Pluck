@@ -67,11 +67,14 @@ sequenceDiagram
    the same `buildExport()` the dock uses builds the TOON and HTML (without telling the dock,
    so its loader doesn't spin). Your selection is then put back. A `preview` request stops
    before this step and writes `status: "preview"` instead.
-5. **Checks.** `fingerprint` (a hash of the TOON), `sameAsLast` and `missing` (expected labels
-   not in the TOON, ignoring case) are computed from the export, not the live page.
+5. **Checks.** `fingerprint` (a hash of the TOON), `sameAsLast` and `missing` are computed
+   from the export, not the live page. `missing` lists expected labels absent from the TOON's
+   text (not its styles or attribute values), ignoring case and whitespace, the same way the
+   preview checks the page text.
 6. **Save.** The worker checks the site again from the tab URL Chrome reports, blanks
-   sensitive URL parameters, and downloads `pluck/<site>/<name>.toon` and `.html` with
-   `conflictAction: 'overwrite'`.
+   sensitive URL parameters (in the query, the fragment and URL-encoded links; add the app's
+   own with `redactParams: [...]`), and downloads `pluck/<site>/<name>.toon` and `.html` at
+   the same time, with `conflictAction: 'overwrite'`.
 7. **Report.** The content script writes the final result on `<html>`; the agent's next poll
    sees it.
 
@@ -79,9 +82,10 @@ sequenceDiagram
 
 `chrome.downloads.download` only *starts* a download. For each file the worker polls
 `chrome.downloads.search` every 120 ms and records the file only once Chrome reports it
-`complete`; an interrupted download, or one not complete within 15 s, gets no path. If no
-file was saved, the result is `status: "error"` with `downloads did not complete`. So
-`status: "done"` with `paths.toon` means the file is on disk.
+`complete`; an interrupted download, or one not complete within 15 s, is cancelled. If any
+requested file was not saved, the result is `status: "error"` with
+`downloads did not complete: <formats>`. So `status: "done"` means every requested file is on
+disk.
 
 Accept a result only when its `id` matches the request, `status` is `done`, `missing` is empty
 and `sameAsLast` is `false`. Then confirm from the shell
@@ -93,8 +97,10 @@ relative to the downloads folder, so the page never learns the account name.
 ### 1. Allow the site
 
 Local development hosts work out of the box. For any other site, open the dock on that tab,
-go to **Settings › Agent captures**, and switch the site on. A refused request reports
-`origin not in the agent bridge allowlist`.
+go to **Settings › Agent captures**, and switch the site on. A site that is not allowed gets
+no reply at all (so a page cannot detect Pluck): an agent sees the same silence as when Pluck
+is not installed. An allowed site matches only its exact origin, port included; the local
+hosts match on any port.
 
 ### 2. Mark the target
 
@@ -139,9 +145,10 @@ enough for a screenshot when the target is in doubt. Several elements: `selector
 and `combine: 'ancestor'` for their common parent.
 
 Errors: `a capture is already running`, `target not found`, `no element matches: …` (with
-`missing`), `invalid selector: …`, `origin not in the agent bridge allowlist`,
-`downloads did not complete`. If Pluck was reloaded after the page opened, requests fail
-with an "Extension context invalidated" reason; reload the page.
+`missing`), `invalid selector: …`, `downloads did not complete: …`. If Pluck was reloaded
+after the page opened, requests fail with an "Extension context invalidated" reason; reload
+the page. Send one request at a time and wait for its result: the result attribute holds only
+the latest answer, so a request sent while another runs can lose its rejection.
 
 ### 4. Move it into the project
 
