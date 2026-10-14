@@ -5101,6 +5101,8 @@ try {
       return;
     }
     if (busy) { report({ status: 'error', reason: 'a capture is already running' }); return; }
+    const unknown = (Array.isArray(req.formats) ? req.formats : []).filter((f) => f !== 'toon' && f !== 'html');
+    if (unknown.length) { report({ status: 'error', reason: 'unknown format: ' + unknown.join(', ') }); return; }
     busy = true;
     report({ status: 'pending' });
     clearPreview();

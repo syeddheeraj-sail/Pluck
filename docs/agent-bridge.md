@@ -165,7 +165,7 @@ worker attaches Chrome's debugger for one mouse move and detaches; the page gets
 its own re-layout can drop a hover made too early.
 
 Errors: `a capture is already running`, `target not found`, `no element matches: …` (with
-`missing`), `invalid selector: …`, `downloads did not complete: …`,
+`missing`), `invalid selector: …`, `unknown format: …`, `downloads did not complete: …`,
 `could not move the pointer: …`, `hover target is not shown: …`. If Pluck was reloaded
 after the page opened, requests fail with an "Extension context invalidated" reason; reload
 the page. Send one request at a time and wait for its result: the result attribute holds only
