@@ -3313,6 +3313,11 @@ function buildStructure(el, isRoot = false) {
   const node = {
     tag: tagName
   };
+  // The clone's <canvas> is empty; its bitmap was read before the export.
+  if (tagName === 'canvas' && _canvasPixels.has(originalEl)) {
+    node.tag = 'img';
+    node.src = _canvasPixels.get(originalEl);
+  }
 
   // el is a CLONE - text is frozen at clone time, safe to read directly
   // Build ordered child nodes list (text nodes and elements interleaved)
@@ -3945,6 +3950,86 @@ function buildExport() {
   return exclusiveExport(buildExportNow);
 }
 
+// Canvas bitmaps of the current export, keyed by the live <canvas> element.
+let _canvasPixels = new Map();
+
+/**
+ * A cloned <canvas> carries no pixels: the bitmap exists only on the page's
+ * own element. Read every canvas in the selection up front, as a PNG data URL.
+ * A tainted canvas (cross-origin image) throws, and a WebGL one without
+ * preserveDrawingBuffer reads back transparent; both are cropped out of a
+ * screenshot of the tab instead, when they are on screen.
+ */
+async function readCanvasPixels(roots) {
+  const out = new Map();
+  const canvases = [];
+  for (const root of roots) {
+    if (root.tagName === 'CANVAS') canvases.push(root);
+    root.querySelectorAll('canvas').forEach((c) => canvases.push(c));
+  }
+  const unreadable = [];
+  for (const canvas of canvases) {
+    let url = null;
+    try { url = canvas.toDataURL('image/png'); } catch (e) { url = null; }
+    // A transparent read is real for an empty 2d canvas, a failure for WebGL.
+    if (url && canvasIsBlank(canvas) && !ownsCanvas2d(canvas)) url = null;
+    if (url) out.set(canvas, url); else unreadable.push(canvas);
+  }
+  if (_exportDiag) _exportDiag.canvases = { read: out.size, fromScreen: 0, unreadable: unreadable.length };
+
+  const onScreen = unreadable.filter((c) => {
+    const r = c.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight;
+  });
+  if (!onScreen.length) return out;
+  const shot = await new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({ type: 'CAPTURE_TAB' }, (reply) => {
+        const failed = chrome.runtime.lastError ? chrome.runtime.lastError.message : (!reply || !reply.ok) && ((reply && reply.error) || 'no reply');
+        if (failed && _exportDiag) _exportDiag.canvases.screenshotError = failed;
+        resolve(failed ? null : reply.dataUrl);
+      });
+    } catch (e) { resolve(null); }
+  });
+  if (!shot) return out;
+  const img = new Image();
+  img.src = shot;
+  try { await img.decode(); } catch (e) { return out; }
+  const scale = img.naturalWidth / innerWidth;
+  for (const canvas of onScreen) {
+    const r = canvas.getBoundingClientRect();
+    const crop = document.createElement('canvas');
+    crop.width = Math.max(1, Math.round(r.width * scale));
+    crop.height = Math.max(1, Math.round(r.height * scale));
+    crop.getContext('2d').drawImage(img, r.left * scale, r.top * scale, r.width * scale, r.height * scale,
+      0, 0, crop.width, crop.height);
+    out.set(canvas, crop.toDataURL('image/png'));
+    _exportDiag.canvases.fromScreen++;
+    _exportDiag.canvases.unreadable--;
+  }
+  return out;
+}
+
+/** Every sampled pixel fully transparent? Sampled small, so the cost is constant. */
+function canvasIsBlank(canvas) {
+  try {
+    const probe = document.createElement('canvas');
+    probe.width = probe.height = 24;
+    const ctx = probe.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(canvas, 0, 0, 24, 24);
+    const data = ctx.getImageData(0, 0, 24, 24).data;
+    for (let i = 3; i < data.length; i += 4) if (data[i] !== 0) return false;
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/** Contexts are exclusive: null here means WebGL / WebGPU owns the canvas. */
+function ownsCanvas2d(canvas) {
+  try { return !!canvas.getContext('2d'); } catch (e) { return false; }
+}
+
 async function buildExportNow() {
   console.log('[Pluck] buildExport called, selectedElements.size:', selectedElements.size);
   selectedElements.forEach((el, idx) => {
@@ -3974,6 +4059,7 @@ async function buildExportNow() {
 
   const topLevel = getTopLevelSelections();
   _exportDiag.selectionCount = topLevel.length;
+  _canvasPixels = await readCanvasPixels(topLevel);
 
   // Group selections by layout parent so siblings keep their flex/grid context.
   const groups = new Map();
@@ -4091,7 +4177,7 @@ async function buildExportNow() {
     // Attributes on same line
     const attrs = [];
     if (node.href) attrs.push(`href="${node.href}"`);
-    if (node.src) attrs.push(`src="${node.src}"`);
+    if (node.src) attrs.push(`src="${/^data:/.test(node.src) ? node.src.slice(0, node.src.indexOf(',') + 1) + '…(' + node.src.length + ' bytes)' : node.src}"`);
     if (node.alt) attrs.push(`alt="${node.alt}"`);
     if (node.type) attrs.push(`type="${node.type}"`);
     if (node.placeholder) attrs.push(`placeholder="${node.placeholder}"`);
@@ -5063,7 +5149,8 @@ try {
   function brief(d) {
     if (!d) return null;
     return { selections: d.selectionCount, filtered: d.filteredCount, styles: d.styleCount,
-      hoverStyles: d.hoverStyleCount, primaryFont: d.primaryFont || null, primaryFontWillLoad: !!d.primaryFontWillLoad };
+      hoverStyles: d.hoverStyleCount, primaryFont: d.primaryFont || null, primaryFontWillLoad: !!d.primaryFontWillLoad,
+      canvases: d.canvases || null };
   }
 
   /** Runs buildExport on the given elements, then puts the user's own selection back. */

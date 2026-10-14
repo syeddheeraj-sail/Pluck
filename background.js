@@ -172,13 +172,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // Handle screen capture for color picker
+  // Screen capture for the color picker and for canvases an export cannot read.
+  // Taken from the asking tab's own window (the focused window may be another
+  // one, or a chrome:// page that cannot be captured), and only while that tab
+  // is the one showing, or the screenshot would be of a different page.
   if (message.type === 'CAPTURE_TAB') {
-    chrome.tabs.captureVisibleTab(null, { format: 'png' }, (dataUrl) => {
+    const tab = sender.tab;
+    if (tab && !tab.active) {
+      sendResponse({ ok: false, error: 'the tab is not the visible one in its window' });
+      return true;
+    }
+    let done = false;
+    const finish = (reply) => { if (!done) { done = true; sendResponse(reply); } };
+    // A window covered by another app may never produce a frame to capture.
+    setTimeout(() => finish({ ok: false, error: 'the tab produced no frame to screenshot (timed out)' }), 5000);
+    chrome.tabs.captureVisibleTab(tab ? tab.windowId : null, { format: 'png' }, (dataUrl) => {
       if (chrome.runtime.lastError) {
-        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+        finish({ ok: false, error: chrome.runtime.lastError.message });
       } else {
-        sendResponse({ ok: true, dataUrl });
+        finish({ ok: true, dataUrl });
       }
     });
     return true; // Keep channel open for async

@@ -182,6 +182,15 @@ scripts/agent-import.sh checkout-card path/to/captures
 The script takes the newest capture of that name, moves it, and prints the TOON's section
 outline with line numbers. Read `## Structure` first, then only the styles it uses.
 
+## Canvases
+
+A `<canvas>` carries no elements to copy, so the export reads its pixels from the page and
+writes it as an `<img>` (the TOON shows `src="data:image/png;base64,…(N bytes)"`). A canvas
+that cannot be read, a tainted one (it drew a cross-origin image) or WebGL without
+`preserveDrawingBuffer` (reads back transparent), is cropped out of a screenshot of the tab
+instead, when it is on screen and the window is visible. `diagnostics.canvases` reports
+`{ read, fromScreen, unreadable }`; an unreadable canvas stays an empty `<canvas>`.
+
 ## Tips from real use
 
 - **Re-define helpers after navigation.** Page-swapping apps replace `window`, so a helper
