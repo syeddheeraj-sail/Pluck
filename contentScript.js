@@ -4842,7 +4842,7 @@ try {
 //   the ones it does not (case-insensitive).
 // - fingerprint / sameAsLast: catch a capture identical to the previous one.
 // Files are saved by the worker to Downloads/pluck/<site>/<name>.toon|.html,
-// only on sites allowed in the dock's Settings (local hosts by default).
+// only on sites allowed by the dock's Agent captures switch (local hosts by default).
 (function () {
   if (window.top !== window) return;
   const KEY = '__pluckAgent';
