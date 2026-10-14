@@ -358,6 +358,29 @@ async function agentSave(origin, message) {
   return { ok: true, paths, bytes };
 }
 
+/**
+ * Moves the real pointer for an agent capture's `hover`. Only Chrome's own input
+ * pipeline sets :hover and fires trusted mouse events, so a page cannot fake it;
+ * the debugger is attached for this one event and detached straight away.
+ */
+async function agentHover(tabId, x, y) {
+  if (!isFinite(x) || !isFinite(y)) return { ok: false, reason: 'hover point is not a number' };
+  const target = { tabId };
+  try {
+    await chrome.debugger.attach(target, '1.3');
+  } catch (e) {
+    return { ok: false, reason: 'could not move the pointer: ' + String((e && e.message) || e) };
+  }
+  try {
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    return { ok: true, x, y };
+  } catch (e) {
+    return { ok: false, reason: 'could not move the pointer: ' + String((e && e.message) || e) };
+  } finally {
+    await chrome.debugger.detach(target).catch(() => {});
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== 'string' || message.type.indexOf('PLUCK_AGENT_') !== 0) return false;
   const tabOrigin = sender.tab && sender.tab.url ? (() => { try { return new URL(sender.tab.url).origin; } catch (e) { return ''; } })() : '';
@@ -392,6 +415,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     // The content script built the export; save it. The site is checked again
     // here, from the tab URL Chrome reports rather than anything the page says.
+    // Moves the real pointer before a capture (`hover`), on an allowed site only.
+    case 'PLUCK_AGENT_HOVER':
+      if (!sender.tab || sender.frameId !== 0) { sendResponse({ ok: false, reason: 'hover is top-frame only' }); return true; }
+      return reply(agentAllowed(tabOrigin).then((gate) => (gate.ok
+        ? agentHover(sender.tab.id, Number(message.x), Number(message.y))
+        : gate)));
+
     case 'PLUCK_AGENT_SAVE':
       if (!sender.tab) { sendResponse({ ok: false, reason: 'no tab' }); return true; }
       return reply(agentSave(tabOrigin, message));

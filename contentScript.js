@@ -4849,6 +4849,7 @@ try {
   const RESULT_ATTR = 'data-pluck-result';
   const PREVIEW_ID = '__pluck_agent_preview';
   const LIST_LIMIT = 30;
+  const HOVER_MS = 500;
   let busy = false;
   let lastFingerprint = null;
   let previewTimer = null;
@@ -4880,6 +4881,27 @@ try {
       ? el.className.split(/\s+/).filter((c) => c && !c.startsWith('web-replica-')).slice(0, 4).join('.') : '';
     return { tag: el.tagName.toLowerCase(), id: el.id || null, classes: cls || null,
       width: Math.round(r.width), height: Math.round(r.height), text: norm(el.innerText).slice(0, 80) };
+  }
+
+  /**
+   * `hover`: where the real pointer goes before capturing, as a selector (its
+   * centre, scrolled into view first) or viewport {x, y}.
+   */
+  function hoverPoint(hover) {
+    if (hover && typeof hover === 'object' && isFinite(hover.x) && isFinite(hover.y)) {
+      return { x: Number(hover.x), y: Number(hover.y) };
+    }
+    if (typeof hover !== 'string' || !hover) return { error: 'hover must be a selector or {x, y}' };
+    const hit = query(hover);
+    if (hit.invalid) return { error: 'invalid selector: ' + hover };
+    if (!hit.el) return { error: 'no element matches: ' + hover, missing: [hover] };
+    let rect = hit.el.getBoundingClientRect();
+    if (rect.bottom < 0 || rect.top > innerHeight || rect.right < 0 || rect.left > innerWidth) {
+      hit.el.scrollIntoView({ block: 'center', inline: 'center' });
+      rect = hit.el.getBoundingClientRect();
+    }
+    if (!rect.width && !rect.height) return { error: 'hover target is not shown: ' + hover };
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
   }
 
   function query(selector) {
@@ -5083,6 +5105,19 @@ try {
     report({ status: 'pending' });
     clearPreview();
     try {
+      if (req.hover != null) {
+        const point = hoverPoint(req.hover);
+        if (point.error) {
+          report(Object.assign({ status: 'error', reason: point.error }, point.missing ? { missing: point.missing } : {}));
+          return;
+        }
+        const moved = await ask({ type: 'PLUCK_AGENT_HOVER', x: point.x, y: point.y });
+        if (!moved.ok) { report({ status: 'error', reason: moved.reason || 'could not move the pointer' }); return; }
+        // Long enough for a hover menu or tooltip to open.
+        const wait = Math.min(10000, Math.max(0, Number(req.hoverMs) >= 0 ? Number(req.hoverMs) : HOVER_MS));
+        await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+
       const resolved = resolveTargets(req);
       if (resolved.error) {
         report(Object.assign({ status: 'error', reason: resolved.error }, resolved.missing ? { missing: resolved.missing } : {}));

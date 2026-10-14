@@ -313,6 +313,7 @@ document.documentElement.getAttribute('data-pluck-result')
 | `selectors: [...]` | Several elements in one capture, like Shift+Click (each as-is unless `exact:false`). One that matches nothing fails the request and is named in `missing`. |
 | `combine: 'ancestor'` | With `selectors`: capture their nearest common parent instead. |
 | `point`, `hovered`, `fullPage` | The element at a point, under the real pointer (keeps a hover menu open), or the whole page. |
+| `hover`, `hoverMs` | Before capturing, move the real pointer to `hover` (a selector, scrolled into view and aimed at its centre, or viewport `{x, y}`) and wait `hoverMs` (default 500) for a hover menu, tooltip or hover colour to appear. Then capture it with `hovered: true` or its own `selector`. Combine with `preview` to look without saving; `hover` on an empty spot moves the pointer away. |
 | `preview: true` | Outline the target for `previewMs` (default 4000) and report what is inside: box, hidden / off-screen, headings, controls with labels, text. Nothing is saved. |
 | `expect: { text: [...] }` | Labels the capture must contain. `missing` lists the ones the exported TOON's text doesn't (ignoring case and whitespace). |
 | `formats` | `['toon', 'html']` by default. |
@@ -566,6 +567,7 @@ Pluck/
 | `webNavigation` | Detect frames and iframes for cross-frame support |
 | `clipboardWrite` | Auto-copy exports and Copy-for-AI output to the clipboard |
 | `sidePanel` | Show the Pluck dock in Chrome's side panel |
+| `debugger` | Move the real pointer for an agent capture's `hover` (only Chrome's own input sets `:hover`). Attached to that tab for one mouse move on an allowed site, then detached; it never clicks or types. Chrome may briefly show its "started debugging this browser" bar |
 
 ### Browser Compatibility
 

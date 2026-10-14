@@ -62,11 +62,12 @@ sequenceDiagram
    writes `{"id":…,"status":"pending"}` on `<html>`.
 3. **Gate.** The content script asks the worker whether this site is allowed, over
    `chrome.runtime` messaging, which the page can't see or forge.
-4. **Resolve and export.** The target is found and, unless `exact`, expanded with the same
-   smart expansion a click uses. Your own selection is set aside, the target is selected, and
-   the same `buildExport()` the dock uses builds the TOON and HTML (without telling the dock,
-   so its loader doesn't spin). Your selection is then put back. A `preview` request stops
-   before this step and writes `status: "preview"` instead.
+4. **Resolve and export.** With `hover`, the worker first moves the real pointer there through
+   Chrome's debugger and waits `hoverMs`. The target is found and, unless `exact`, expanded
+   with the same smart expansion a click uses. Your own selection is set aside, the target is
+   selected, and the same `buildExport()` the dock uses builds the TOON and HTML (without
+   telling the dock, so its loader doesn't spin). Your selection is then put back. A `preview`
+   request stops before this step and writes `status: "preview"` instead.
 5. **Checks.** `fingerprint` (a hash of the TOON), `sameAsLast` and `missing` are computed
    from the export, not the live page. `missing` lists expected labels absent from the TOON's
    text (not its styles or attribute values), ignoring case and whitespace, the same way the
@@ -144,8 +145,28 @@ headings and its controls with labels. The outline stays up about 4 s (`previewM
 enough for a screenshot when the target is in doubt. Several elements: `selectors: [...]`,
 and `combine: 'ancestor'` for their common parent.
 
+Hover states: `hovered: true` takes the element under the real mouse, which a browser tool's
+"hover" does not move (it draws a cursor; the page's `:hover` stays empty). Add `hover` to let
+Pluck move the pointer first, then capture what appeared:
+
+```js
+// hover the trigger, wait for the menu, capture it
+{ __pluckAgent: 'capture', id: 'h1', name: 'account-menu', hover: '#account', hoverMs: 800,
+  selector: '.menu-popover', exact: true, expect: { text: ['Sign out'] } }
+// a hover colour: hover the button and capture the button itself
+{ __pluckAgent: 'capture', id: 'h2', name: 'cta-hover', hover: '#cta', selector: '#cta', exact: true }
+// move the pointer away (closes the menu) before the next capture
+{ __pluckAgent: 'capture', id: 'h3', preview: true, hover: { x: 5, y: innerHeight - 5 }, fullPage: true }
+```
+
+`hover` takes a selector (scrolled into view, pointer at its centre) or viewport `{x, y}`. The
+worker attaches Chrome's debugger for one mouse move and detaches; the page gets real, trusted
+`mouseover` / `mousemove` events. Give a page that is still loading or animating a moment first:
+its own re-layout can drop a hover made too early.
+
 Errors: `a capture is already running`, `target not found`, `no element matches: …` (with
-`missing`), `invalid selector: …`, `downloads did not complete: …`. If Pluck was reloaded
+`missing`), `invalid selector: …`, `downloads did not complete: …`,
+`could not move the pointer: …`, `hover target is not shown: …`. If Pluck was reloaded
 after the page opened, requests fail with an "Extension context invalidated" reason; reload
 the page. Send one request at a time and wait for its result: the result attribute holds only
 the latest answer, so a request sent while another runs can lose its rejection.
