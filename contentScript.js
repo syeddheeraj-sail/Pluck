@@ -4857,6 +4857,11 @@ try {
 
   function ask(message) {
     return new Promise((resolve) => {
+      // A reloaded extension leaves this script running with chrome.runtime gone.
+      if (!chrome.runtime || !chrome.runtime.id) {
+        resolve({ ok: false, reason: 'Extension context invalidated. Reload this page.' });
+        return;
+      }
       try {
         chrome.runtime.sendMessage(message, (reply) => {
           if (chrome.runtime.lastError) resolve({ ok: false, reason: chrome.runtime.lastError.message });
